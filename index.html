@@ -1360,9 +1360,11 @@ class Fighter {
     if (!this.grounded) {
       this.vel.y += STATE.gravity*dt;
       this.pos.y += this.vel.y*dt;
-      if (this.pos.y <= 0) {
-        const wasFalling = this.vel.y < -10;
-        this.pos.y = 0; this.vel.y = 0; this.grounded = true;
+      if (this.pos.y <= -1.2) {  // Match baseplate.position.y
+  const wasFalling = this.vel.y < -10;
+  this.pos.y = -1.2; this.vel.y = 0; this.grounded = true;
+  if (wasFalling) spawnDustCloud(this.pos.clone());
+}
         if (wasFalling) spawnDustCloud(this.pos.clone());
       }
     }
