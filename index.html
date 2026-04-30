@@ -71,6 +71,10 @@ canvas { display: block; }
 #hit-indicator { position:fixed; inset:0; pointer-events:none; z-index:80; background:radial-gradient(ellipse at center, transparent 55%, rgba(239,68,68,0.45)); opacity:0; transition:opacity 0.18s ease; }
 #hit-indicator.active { opacity:1; }
 #screen-flash { position:fixed; inset:0; pointer-events:none; z-index:65; background:#fff; opacity:0; transition:opacity 0.08s; }
+#black-flash-overlay { position:fixed; inset:0; pointer-events:none; z-index:170; opacity:0; }
+#black-flash-overlay .bf-bg { position:absolute; inset:0; background: radial-gradient(ellipse at center, rgba(60,0,0,0.72) 0%, rgba(0,0,0,0.88) 100%); }
+#black-flash-overlay .bf-star { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:0; height:0; }
+#black-flash-overlay canvas { position:absolute; inset:0; width:100%; height:100%; }
 #speed-lines { position:fixed; inset:0; pointer-events:none; z-index:55; opacity:0; transition:opacity 0.12s ease; background:repeating-linear-gradient(90deg,transparent 0,transparent 24px,rgba(255,255,255,0.13) 24px,rgba(255,255,255,0.13) 26px); mix-blend-mode:screen; }
 #speed-lines.active { opacity:0.85; }
 #ability-charge { position:fixed; inset:0; pointer-events:none; z-index:58; opacity:0; transition:opacity 0.25s ease; }
@@ -140,6 +144,9 @@ canvas { display: block; }
 <div id="crosshair"></div>
 <div id="hit-indicator"></div>
 <div id="screen-flash"></div>
+<div id="black-flash-overlay">
+  <canvas id="bf-canvas"></canvas>
+</div>
 <div id="speed-lines"></div>
 <div id="ability-charge"></div>
 
@@ -150,7 +157,7 @@ canvas { display: block; }
     <strong>LMB</strong> Combo &nbsp; <strong>R</strong> Heavy &nbsp; <strong>E</strong> Launch<br>
     <strong>Q</strong> Dash &nbsp; <strong>T</strong> Rush &nbsp; <strong>F</strong> Block<br>
     <strong>RMB</strong> Camera &nbsp; <strong>L.CTRL</strong> Lock Mouse<br>
-    <strong>1-4</strong> Style Abilities &nbsp; <strong>G</strong> Switch Style
+    <strong>1-4</strong> Style Abilities &nbsp; <strong>G</strong> Switch Style &nbsp; <strong>O</strong> Black Flash
   </div>
 </div>
 
@@ -765,6 +772,129 @@ function doScreenFlash(color, opacity, holdMs, fadeMs) {
     sf.style.opacity = '0';
     setTimeout(() => { sf.style.background = '#fff'; sf.style.transition = 'opacity 0.08s'; }, fadeMs+100);
   }, holdMs);
+}
+
+// ============================================================================
+// BLACK FLASH — Star explosion, 0.3s, game visible behind
+// ============================================================================
+let blackFlashCooldown = 0;
+let bfAnimId = null;
+
+function doBlackFlash() {
+  if (player.dead || blackFlashCooldown > 0) return;
+  blackFlashCooldown = 6;
+
+  const overlay = document.getElementById('black-flash-overlay');
+  const cvs = document.getElementById('bf-canvas');
+  cvs.width = window.innerWidth;
+  cvs.height = window.innerHeight;
+  const ctx = cvs.getContext('2d');
+  const cx = cvs.width / 2, cy = cvs.height / 2;
+  const startTime = performance.now();
+  const DURATION = 300; // ms
+
+  overlay.style.opacity = '1';
+  if (bfAnimId) cancelAnimationFrame(bfAnimId);
+
+  function drawFrame() {
+    const elapsed = performance.now() - startTime;
+    const t = Math.min(elapsed / DURATION, 1); // 0 → 1
+
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+
+    // Easing: fast flash in, quick fade
+    // t=0..0.15 → ramp up, t=0.15..1 → fade out
+    const peakT = 0.15;
+    const alpha = t < peakT
+      ? (t / peakT)           // ramp up
+      : 1 - ((t - peakT) / (1 - peakT)); // ramp down
+
+    // ── Dark red/black radial background ──
+    const bgR = Math.max(cvs.width, cvs.height) * 1.1;
+    const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, bgR);
+    bgGrad.addColorStop(0, `rgba(120,0,0,${0.75 * alpha})`);
+    bgGrad.addColorStop(0.45, `rgba(40,0,0,${0.82 * alpha})`);
+    bgGrad.addColorStop(1, `rgba(0,0,0,${0.78 * alpha})`);
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+    // ── Star burst rays ──
+    const numRays = 22;
+    const maxRayLen = Math.max(cvs.width, cvs.height) * 0.72;
+    const rayScale = t < peakT ? (t / peakT) : 1; // rays expand then hold
+    for (let i = 0; i < numRays; i++) {
+      const angle = (i / numRays) * Math.PI * 2;
+      const isLong = i % 3 !== 2;
+      const len = maxRayLen * rayScale * (isLong ? 1 : 0.55);
+      const width = isLong ? (0.022 + 0.016 * Math.sin(i * 2.7)) : 0.012;
+      const halfW = len * width;
+
+      const px = cx + Math.cos(angle - Math.PI / 2) * len;
+      const py = cy + Math.sin(angle - Math.PI / 2) * len;
+      const perpX = -Math.sin(angle - Math.PI / 2) * halfW;
+      const perpY = Math.cos(angle - Math.PI / 2) * halfW;
+
+      const rayGrad = ctx.createLinearGradient(cx, cy, px, py);
+      rayGrad.addColorStop(0, `rgba(255,255,255,${0.95 * alpha})`);
+      rayGrad.addColorStop(0.15, `rgba(255,80,0,${0.85 * alpha})`);
+      rayGrad.addColorStop(0.55, `rgba(180,0,0,${0.55 * alpha})`);
+      rayGrad.addColorStop(1, `rgba(0,0,0,0)`);
+
+      ctx.beginPath();
+      ctx.moveTo(cx + perpX, cy + perpY);
+      ctx.lineTo(px, py);
+      ctx.lineTo(cx - perpX, cy - perpY);
+      ctx.closePath();
+      ctx.fillStyle = rayGrad;
+      ctx.fill();
+    }
+
+    // ── Bright core explosion ──
+    const coreR = 120 * rayScale;
+    const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+    coreGrad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    coreGrad.addColorStop(0.18, `rgba(255,160,0,${0.92 * alpha})`);
+    coreGrad.addColorStop(0.45, `rgba(200,0,0,${0.7 * alpha})`);
+    coreGrad.addColorStop(1, `rgba(0,0,0,0)`);
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+    ctx.fillStyle = coreGrad;
+    ctx.fill();
+
+    // ── Inner white flash ring ──
+    const ringR = 55 * rayScale;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${0.88 * alpha})`;
+    ctx.fill();
+
+    if (t < 1) {
+      bfAnimId = requestAnimationFrame(drawFrame);
+    } else {
+      ctx.clearRect(0, 0, cvs.width, cvs.height);
+      overlay.style.opacity = '0';
+    }
+  }
+
+  drawFrame();
+
+  // Screen shake + hitstop + damage on key press
+  STATE.screenShake = 1.4;
+  STATE.screenShakeTime = 0.45;
+  STATE.hitstopUntil = performance.now() + 160;
+
+  const toEnemy = enemy.pos.clone().sub(player.pos);
+  const dist = toEnemy.length();
+  toEnemy.y = 0; toEnemy.normalize();
+  if (dist < 7 && !enemy.dead) {
+    const critDmg = 45 + Math.floor(Math.random() * 20);
+    enemy.takeDamage(critDmg, player, toEnemy, 28, 6, 'back');
+    spawnHitSpark(enemy.pos.clone().add(new THREE.Vector3(0,3,0)), 0x000000, 18, 0.45);
+    spawnHitSpark(enemy.pos.clone().add(new THREE.Vector3(0,3,0)), 0xff2200, 14, 0.35);
+    spawnHitSpark(enemy.pos.clone().add(new THREE.Vector3(0,3,0)), 0xffffff, 8, 0.28);
+    spawnShockwave(enemy.pos.clone(), 0x330000, 10);
+    spawnImpactFlash(enemy.pos.clone().add(new THREE.Vector3(0,3,0)), 0x000000, 4);
+  }
 }
 
 // ============================================================================
@@ -1992,6 +2122,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') player.startAction('rush');
   if (e.code === 'KeyF') player.blocking = true;
   if (e.code === 'KeyG') switchStyle();
+  if (e.code === 'KeyO') doBlackFlash();
   if (e.code === 'Digit1') player.startAction('ability1');
   if (e.code === 'Digit2') player.startAction('ability2');
   if (e.code === 'Digit3') player.startAction('ability3');
@@ -2153,6 +2284,7 @@ function gameLoop() {
     updateDomain(dt);
     updateCamera(dt);
     updateUI();
+    if (blackFlashCooldown > 0) blackFlashCooldown -= dt;
   }
   renderer.render(scene, camera);
 }
